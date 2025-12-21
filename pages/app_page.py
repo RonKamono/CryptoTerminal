@@ -150,6 +150,10 @@ class AppWindow:
                 position_share = float(percent) / 100 if percent else 0.01
                 balance_percent = round(price_change_pct * leverage * position_share, 2)
 
+            except Exception as e:
+                print(f"Ошибка расчёта: {e}")
+                balance_percent = 0
+
         # Обновляем контейнер
         self.position_containers[index].content = ft.Column(
             controls=[
