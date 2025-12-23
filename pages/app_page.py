@@ -1,14 +1,12 @@
-import flet as ft
-import webbrowser
-from parsing.coin_price_parcing import get_bybit_futures_price
-import threading
-import time
 import concurrent.futures
-from typing import Dict, List
-from datetime import datetime
-import sys
-import os
+import flet as ft
+import threading, time
+import utils.webbrowser_open as wbb
+import sys, os
 
+from datetime import datetime
+from parsing.coin_price_parcing import get_bybit_futures_price
+from typing import Dict, List
 
 class AppWindow:
     def __init__(self, page, cl, trading_bot=None):
@@ -121,11 +119,10 @@ class AppWindow:
         self.position_containers = []
         for i in range(8):
             container = ft.Container(
-                width=250,
-                height=150,
+                width=350,
+                height=190,
                 bgcolor=self.cl.color_bg,
                 border_radius=20,
-                on_click=lambda e, idx=i: self._on_container_click(idx),
                 content=ft.Column(
                     controls=[
                         ft.Text(f'Позиция {i + 1}', color=self.cl.text_secondary),
@@ -144,12 +141,8 @@ class AppWindow:
             return
 
         try:
-            print(f"🔍 Загружаем позиции из БД...")
-
-            # Получаем ВСЕ позиции из БД
+            # Получаем все позиции
             positions = self.db.get_all_positions(active_only=False)
-            print(f"🔍 Получено позиций из БД: {len(positions)}")
-
             # Получаем цены
             price_cache = self._get_prices_parallel(positions)
 
@@ -208,38 +201,6 @@ class AppWindow:
 
         return price_cache
 
-    def _on_container_click(self, index):
-        """Обработчик клика по контейнеру - открывает позицию в браузере"""
-        print(f"Клик по контейнеру {index}")
-
-        try:
-            # Загружаем позиции из БД
-            if not self.db:
-                print("❌ БД не инициализирована")
-                return
-
-            positions = self.db.get_all_positions(active_only=False)
-
-            # Проверяем, есть ли позиция для этого индекса
-            if index < len(positions):
-                position = positions[index]
-                name = position.get('name', '').upper()
-
-                if name:
-                    # Формируем ссылку на Bybit
-                    url = f"https://www.bybit.com/trade/usdt/{name}"
-                    print(f"🔗 Открываю Bybit для {name}: {url}")
-
-                    # Открываем в браузере
-                    webbrowser.open(url)
-                else:
-                    print(f"❌ Не найдено имя монеты для позиции {index}")
-            else:
-                print(f"❌ Нет позиции для индекса {index}")
-
-        except Exception as e:
-            print(f"❌ Ошибка при клике на контейнер: {e}")
-
     def _update_container_with_data(self, index: int, position_data: Dict, last_price: str):
         """Обновляет контейнер с данными с проверкой TP/SL"""
         try:
@@ -255,18 +216,7 @@ class AppWindow:
             percent = position_data.get('percent')
             entry_price = position_data.get('entry_price')
             is_active = position_data.get('is_active', True)
-            close_reason = position_data.get('close_reason')  # Получаем причину закрытия
-
-            # Работа с временем
-            created_at_str = position_data.get('updated_at', '')
-            if created_at_str:
-                try:
-                    dt_object = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S")
-                    date_time = dt_object.strftime("%d.%m %H:%M")
-                except:
-                    date_time = created_at_str[:16]
-            else:
-                date_time = "N/A"
+            close_reason = position_data.get('close_reason')
 
             # Работа с %
             balance_percent = 0
@@ -281,6 +231,7 @@ class AppWindow:
                         direction_multiplier = 1
 
                     price_change_pct = ((current - entry) / entry) * 100 * direction_multiplier
+
                     position_share = float(percent) / 100 if percent else 0.01
                     balance_percent = round(price_change_pct * leverage * position_share, 2)
                 except Exception as e:
@@ -384,15 +335,28 @@ class AppWindow:
             tp_display = str(tp) if tp else "N/A"
             sl_display = str(sl) if sl else "N/A"
 
-            # Обновляем контейнер
+            # Работа с цветом для | pos_type
+            type_color = ft.Colors.RED_400
+            if pos_type.upper() == "LONG":
+                type_color = ft.Colors.GREEN_400
+
+            # Update container positions
             self.position_containers[index].content = ft.Column(
                 controls=[
                     ft.Text(f"ID: {id} | {name.upper()}", color=self.cl.text_primary, size=16, weight=ft.FontWeight.W_600),
-                    ft.Text(f"Entry: {entry_display}", color=self.cl.text_primary, size=14, weight=ft.FontWeight.W_600),
-                    ft.Text(f"Current: {current_display}", color=self.cl.text_primary, size=14, weight=ft.FontWeight.W_600),
-                    ft.Text(f"{pos_type.upper()} | CROSS: {cross} | PERCENT: {percent}%", color=self.cl.text_primary, size=12, weight=ft.FontWeight.W_600),
-                    ft.Text(f"TP: {tp_display} | SL: {sl_display}", color=self.cl.text_primary, size=12, weight=ft.FontWeight.W_600),
+                    ft.Row(controls=[ft.Text(f"{pos_type.upper()}", color=type_color, size=15, weight=ft.FontWeight.W_600),
+                                ft.Text(f'| CROSS: {cross} | PERCENT: {percent}%', color=self.cl.text_primary,
+                                size=15, weight=ft.FontWeight.W_600)],
+                                alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Text(f"Entry: {entry_display} | Current: {current_display}", color=self.cl.text_primary, size=14, weight=ft.FontWeight.W_600),
+                    ft.Text(f"TP: {tp_display} | SL: {sl_display}", color=self.cl.text_primary, size=13, weight=ft.FontWeight.W_600),
                     ft.Text(f"{status}", color=text_color, size=14, weight=ft.FontWeight.W_700),
+                    ft.Row(controls=[
+                        ft.ElevatedButton(text='Bybit', color=self.cl.text_primary, width=70, bgcolor=self.cl.secondary_bg, on_click = lambda e: wbb.bybit_open(name)),
+                        ft.ElevatedButton(text='Binance', color=self.cl.text_primary, width=70, bgcolor=self.cl.secondary_bg, on_click = lambda e: wbb.binance_open(name)),
+                        ft.ElevatedButton(text='BingX', color=self.cl.text_primary,  width=70, bgcolor=self.cl.secondary_bg, on_click = lambda e: wbb.binx_open(name)),
+                        ft.ElevatedButton(text='Mexc', color=self.cl.text_primary,  width=70, bgcolor=self.cl.secondary_bg, on_click = lambda e: wbb.mexc_open(name))
+                    ], alignment=ft.MainAxisAlignment.CENTER)
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -486,8 +450,8 @@ class AppWindow:
             expand=5,
             controls=[
                 ft.Container(
-                    width=550,
-                    height=760,
+                    width=780,
+                    height=920,
                     bgcolor=self.cl.secondary_bg,
                     border_radius=50,
                     padding=ft.padding.all(20),

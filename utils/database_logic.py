@@ -9,7 +9,6 @@ class TradingDB:
         self.db_path = os.path.join('C:\\DataBase', db_name)
         os.makedirs('C:\\DataBase', exist_ok=True)
         self.create_table()
-        print(f"🔍 DEBUG TradingDB инициализирован, путь к БД: {self.db_path}")
 
     def create_table(self):
         """Создание таблицы"""
@@ -143,14 +142,7 @@ class TradingDB:
     def _send_telegram_notification(self, name: str, percent: int, cross: Optional[int],
                                     entry_price: float,
                                     take_profit: float, stop_loss: float, pos_type: str):
-        """
-        Отправляет уведомление о новой позиции в Telegram бот
-        """
-        print(f"🔍 DEBUG _send_telegram_notification: Начало метода")
-
         try:
-            # Импортируем модуль для отправки уведомлений
-            print(f"🔍 DEBUG: Пытаюсь импортировать telegram_notifier")
             from utils.telegram_notifier import send_position_notification
 
             # Формируем данные позиции - УБРАН is_active!
@@ -221,14 +213,9 @@ class TradingDB:
     def get_all_positions(self, active_only: bool = True) -> List[Dict]:
         """Получить все позиции"""
         try:
-            print(f"🔍 DEBUG get_all_positions: active_only={active_only}")
-            print(f"🔍 DEBUG: db_path={self.db_path}")
-
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-
-                print("🔍 DEBUG: Выполняю SQL запрос...")
 
                 if active_only:
                     cursor.execute('''
@@ -251,7 +238,6 @@ class TradingDB:
                     WHERE is_active = 1
                     ORDER BY created_at DESC
                     ''')
-                    print("🔍 DEBUG: Выполнен запрос для активных позиций")
                 else:
                     cursor.execute('''
                     SELECT 
@@ -272,17 +258,14 @@ class TradingDB:
                     FROM positions 
                     ORDER BY is_active DESC, created_at DESC
                     ''')
-                    print("🔍 DEBUG: Выполнен запрос для всех позиций")
 
                 rows = cursor.fetchall()
-                print(f"🔍 DEBUG: Получено строк: {len(rows)}")
 
                 positions = []
                 for row in rows:
                     try:
                         # 🔴 ВОТ ЗДЕСЬ МОЖЕТ БЫТЬ ПРОБЛЕМА
                         pos_dict = dict(row)
-                        print(f"🔍 DEBUG: Обрабатываю позицию ID={pos_dict.get('id')}")
 
                         # Конвертируем типы данных с проверкой на None
                         if pos_dict.get('percent') is not None:
@@ -333,15 +316,12 @@ class TradingDB:
                                     pos_dict[date_field] = date_str.split('.')[0]
 
                         positions.append(pos_dict)
-                        print(f"🔍 DEBUG: Позиция ID={pos_dict.get('id')} добавлена")
-
                     except Exception as e:
                         print(f"❌ Ошибка обработки строки: {e}")
                         print(f"❌ Строка: {row}")
                         import traceback
                         traceback.print_exc()
 
-                print(f"🔍 DEBUG: Всего обработано позиций: {len(positions)}")
                 return positions
 
         except Exception as e:

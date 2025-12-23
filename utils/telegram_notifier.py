@@ -88,13 +88,12 @@ class TelegramNotifier:
             f"Type: {pos_type}\n"
             f"Cross: {position_data.get('cross')}\n"
             f"Percentage of balance : {position_data.get('percent')}%\n"
-            f"Entry price: {position_data.get('entry_price')}\n"
             f"Take Profit: {position_data.get('take_profit')}\n"
             f"Stop Loss: {position_data.get('stop_loss')}\n"
             f"<b>DON'T FORGET TO SEND A SCREEN OF THE POSITION</b>\n\n"
         )
 
-        message += f"\n🕐 {position_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
+        message += f"\n🕐 {position_data.get('created_at', datetime.now().strftime('%m-%d %H:%M'))}"
 
         return message
 
@@ -117,7 +116,6 @@ class TelegramNotifier:
                 if response.status_code == 200:
                     sent += 1
                 else:
-                    print(f"⚠️ Ошибка пользователю {user_id}: {response.text[:100]}")
                     failed += 1
 
                 # Небольшая задержка
