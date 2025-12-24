@@ -128,7 +128,8 @@ class AppWindow:
             import traceback
             traceback.print_exc()
 
-    # Создание элементов
+    ################ Создание элементов ################
+
     def _create_text_field(self, **kwargs):
         """Создает стандартное текстовое поле"""
         defaults = {
@@ -203,145 +204,6 @@ class AppWindow:
         )
         self.cancel_delete_button.visible = False
 
-    def _toggle_delete_mode(self, e):
-        """Включает/выключает режим удаления позиций"""
-        self.delete_mode = not self.delete_mode
-
-        if self.delete_mode:
-            print("🔴 РЕЖИМ УДАЛЕНИЯ АКТИВЕН: Нажмите на позицию для удаления")
-            self.delete_position_button.text = "Cancel Delete"
-            self.cancel_delete_button.visible = True
-
-            # Показываем сообщение
-            self._show_message("🔴 РЕЖИМ УДАЛЕНИЯ: Нажмите на позицию для удаления")
-
-            # Включаем анимацию пульсации для контейнеров позиций
-            for i, container in enumerate(self.position_containers):
-                if container.content.controls and len(container.content.controls) > 0:
-                    # Проверяем, есть ли реальная позиция
-                    first_text = container.content.controls[0]
-                    if isinstance(first_text, ft.Text) and "ID:" in first_text.value:
-                        container.on_click = lambda e, idx=i: self._delete_selected_position(idx)
-        else:
-            print("✅ Режим удаления отключен")
-            self.delete_position_button.text = "Delete Position"
-            self.delete_position_button.bgcolor = self.cl.surface
-            self.cancel_delete_button.visible = False
-
-            # Сбрасываем стили контейнеров
-            for container in self.position_containers:
-                container.bgcolor = self.cl.color_bg
-                container.border = None
-                container.on_click = None
-
-            self._show_message("✅ Режим удаления отключен")
-
-        # Обновляем UI
-        if self.page:
-            self.page.update()
-
-    def _cancel_delete_mode(self, e):
-        """Отменяет режим удаления"""
-        self.delete_mode = False
-        self.delete_position_button.text = "Delete Position"
-        self.delete_position_button.bgcolor = self.cl.surface
-        self.cancel_delete_button.visible = False
-
-        # Сбрасываем стили контейнеров
-        for container in self.position_containers:
-            container.bgcolor = self.cl.color_bg
-            container.border = None
-            container.on_click = None
-
-        print("✅ Режим удаления отменен")
-        self._show_message("✅ Режим удаления отменен")
-
-        if self.page:
-            self.page.update()
-
-    def _delete_selected_position(self, index):
-        """Удаляет выбранную позицию"""
-        if not self.delete_mode:
-            return
-
-        try:
-            # Получаем данные позиции
-            positions = self.db.get_all_positions(active_only=False)
-            if index >= len(positions):
-                print("❌ Позиция не найдена")
-                self._show_message("❌ Позиция не найдена", is_error=True)
-                return
-
-            position = positions[index]
-            position_id = position.get('id')
-            position_name = position.get('name')
-
-            # Запрашиваем подтверждение
-            self._show_delete_confirmation(position_id, position_name, index)
-
-        except Exception as e:
-            print(f"❌ Ошибка при удалении позиции: {e}")
-            self._show_message(f"❌ Ошибка: {str(e)}", is_error=True)
-
-    def _show_delete_confirmation(self, position_id, position_name, index):
-        """Показывает диалог подтверждения удаления"""
-
-        def confirm_delete(e):
-            # Удаляем позицию из БД
-            if self.db and hasattr(self.db, 'delete_position'):
-                success = self.db.delete_position(position_id)
-                if success:
-                    print(f"✅ Позиция {position_name} (ID: {position_id}) удалена из БД")
-                    self._show_message(f"✅ Позиция {position_name} удалена")
-
-                    # Уведомляем TradingBot об удалении
-                    if self.trading_bot and hasattr(self.trading_bot, 'remove_position'):
-                        self.trading_bot.remove_position(position_id)
-
-                    # Обновляем UI
-                    self._load_positions_from_db()
-                else:
-                    print(f"❌ Не удалось удалить позицию {position_name}")
-                    self._show_message("❌ Не удалось удалить позицию", is_error=True)
-            else:
-                print("❌ База данных не доступна")
-                self._show_message("❌ База данных не доступна", is_error=True)
-
-            # Закрываем диалог
-            self.page.close(dlg)
-            # Отключаем режим удаления
-            self._cancel_delete_mode(None)
-
-        def cancel_delete(e):
-            self.page.close(dlg)
-
-        # Создаем диалог подтверждения
-        dlg = ft.AlertDialog(
-            title=ft.Text("Подтверждение удаления"),
-            content=ft.Column([
-                ft.Text(f"Вы уверены, что хотите удалить позицию?", size=16),
-                ft.Text(f"ID: {position_id} | {position_name}", size=18, weight=ft.FontWeight.BOLD),
-                ft.Text("Это действие нельзя отменить!", size=14, color=ft.Colors.RED, weight=ft.FontWeight.W_500)
-            ], tight=True),
-            actions=[
-                ft.TextButton("Удалить", on_click=confirm_delete, style=ft.ButtonStyle(color=ft.Colors.RED)),
-                ft.TextButton("Отмена", on_click=cancel_delete),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-
-        self.page.open(dlg)
-
-    def _show_message(self, message: str, is_error: bool = False):
-        """Показывает всплывающее сообщение"""
-        self.page.snack_bar = ft.SnackBar(
-            content=ft.Text(message),
-            bgcolor=ft.Colors.RED_400 if is_error else self.cl.secondary_bg
-        )
-        self.page.snack_bar.open = True
-        if self.page:
-            self.page.update()
-
     def _create_position_containers(self):
         """Создает контейнеры для позиций"""
         self.position_containers = []
@@ -412,7 +274,7 @@ class AppWindow:
         )
         self.target_coin_container.append(target_container)
 
-    # Методы отвечающие за парсинг и изменение цен
+    ################ Методы отвечающие за парсинг и изменение цен ################
 
     def _force_initial_price_update(self):
         try:
@@ -592,7 +454,7 @@ class AppWindow:
                 )
             )
 
-    # Методы отвечающие за Alert Target
+    ################ Методы отвечающие за Alert Target ################
 
     def _start_alert_checker(self):
         """Запускает поток проверки алертов"""
@@ -1395,6 +1257,145 @@ class AppWindow:
             )
 
     # Функции
+    def _toggle_delete_mode(self, e):
+        """Включает/выключает режим удаления позиций"""
+        self.delete_mode = not self.delete_mode
+
+        if self.delete_mode:
+            print("🔴 РЕЖИМ УДАЛЕНИЯ АКТИВЕН: Нажмите на позицию для удаления")
+            self.delete_position_button.text = "Cancel Delete"
+            self.cancel_delete_button.visible = True
+
+            # Показываем сообщение
+            self._show_message("🔴 РЕЖИМ УДАЛЕНИЯ: Нажмите на позицию для удаления")
+
+            # Включаем анимацию пульсации для контейнеров позиций
+            for i, container in enumerate(self.position_containers):
+                if container.content.controls and len(container.content.controls) > 0:
+                    # Проверяем, есть ли реальная позиция
+                    first_text = container.content.controls[0]
+                    if isinstance(first_text, ft.Text) and "ID:" in first_text.value:
+                        container.on_click = lambda e, idx=i: self._delete_selected_position(idx)
+        else:
+            print("✅ Режим удаления отключен")
+            self.delete_position_button.text = "Delete Position"
+            self.delete_position_button.bgcolor = self.cl.surface
+            self.cancel_delete_button.visible = False
+
+            # Сбрасываем стили контейнеров
+            for container in self.position_containers:
+                container.bgcolor = self.cl.color_bg
+                container.border = None
+                container.on_click = None
+
+            self._show_message("✅ Режим удаления отключен")
+
+        # Обновляем UI
+        if self.page:
+            self.page.update()
+
+    def _cancel_delete_mode(self, e):
+        """Отменяет режим удаления"""
+        self.delete_mode = False
+        self.delete_position_button.text = "Delete Position"
+        self.delete_position_button.bgcolor = self.cl.surface
+        self.cancel_delete_button.visible = False
+
+        # Сбрасываем стили контейнеров
+        for container in self.position_containers:
+            container.bgcolor = self.cl.color_bg
+            container.border = None
+            container.on_click = None
+
+        print("✅ Режим удаления отменен")
+        self._show_message("✅ Режим удаления отменен")
+
+        if self.page:
+            self.page.update()
+
+    def _delete_selected_position(self, index):
+        """Удаляет выбранную позицию"""
+        if not self.delete_mode:
+            return
+
+        try:
+            # Получаем данные позиции
+            positions = self.db.get_all_positions(active_only=False)
+            if index >= len(positions):
+                print("❌ Позиция не найдена")
+                self._show_message("❌ Позиция не найдена", is_error=True)
+                return
+
+            position = positions[index]
+            position_id = position.get('id')
+            position_name = position.get('name')
+
+            # Запрашиваем подтверждение
+            self._show_delete_confirmation(position_id, position_name, index)
+
+        except Exception as e:
+            print(f"❌ Ошибка при удалении позиции: {e}")
+            self._show_message(f"❌ Ошибка: {str(e)}", is_error=True)
+
+    def _show_delete_confirmation(self, position_id, position_name, index):
+        """Показывает диалог подтверждения удаления"""
+
+        def confirm_delete(e):
+            # Удаляем позицию из БД
+            if self.db and hasattr(self.db, 'delete_position'):
+                success = self.db.delete_position(position_id)
+                if success:
+                    print(f"✅ Позиция {position_name} (ID: {position_id}) удалена из БД")
+                    self._show_message(f"✅ Позиция {position_name} удалена")
+
+                    # Уведомляем TradingBot об удалении
+                    if self.trading_bot and hasattr(self.trading_bot, 'remove_position'):
+                        self.trading_bot.remove_position(position_id)
+
+                    # Обновляем UI
+                    self._load_positions_from_db()
+                else:
+                    print(f"❌ Не удалось удалить позицию {position_name}")
+                    self._show_message("❌ Не удалось удалить позицию", is_error=True)
+            else:
+                print("❌ База данных не доступна")
+                self._show_message("❌ База данных не доступна", is_error=True)
+
+            # Закрываем диалог
+            self.page.close(dlg)
+            # Отключаем режим удаления
+            self._cancel_delete_mode(None)
+
+        def cancel_delete(e):
+            self.page.close(dlg)
+
+        # Создаем диалог подтверждения
+        dlg = ft.AlertDialog(
+            title=ft.Text("Подтверждение удаления"),
+            content=ft.Column([
+                ft.Text(f"Вы уверены, что хотите удалить позицию?", size=16),
+                ft.Text(f"ID: {position_id} | {position_name}", size=18, weight=ft.FontWeight.BOLD),
+                ft.Text("Это действие нельзя отменить!", size=14, color=ft.Colors.RED, weight=ft.FontWeight.W_500)
+            ], tight=True),
+            actions=[
+                ft.TextButton("Удалить", on_click=confirm_delete, style=ft.ButtonStyle(color=ft.Colors.RED)),
+                ft.TextButton("Отмена", on_click=cancel_delete),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+
+        self.page.open(dlg)
+
+    def _show_message(self, message: str, is_error: bool = False):
+        """Показывает всплывающее сообщение"""
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text(message),
+            bgcolor=ft.Colors.RED_400 if is_error else self.cl.secondary_bg
+        )
+        self.page.snack_bar.open = True
+        if self.page:
+            self.page.update()
+
     def _get_prices_parallel(self, positions: List[Dict]) -> Dict[str, str]:
         """Получает цены для всех монет параллельно"""
         price_cache = {}
