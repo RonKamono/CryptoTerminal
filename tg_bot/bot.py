@@ -9,21 +9,20 @@ import sqlite3
 import os
 from datetime import datetime
 from typing import List, Dict, Optional
-
+from utils.config import get_setting, get_default_users_db_path, get_default_db_path
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class TradingBot:
-    def __init__(self, token: str, db_path: str = 'C:\\DataBase\\trading.db',
+    def __init__(self, token: str,
                  admin_ids: List[int] = None):
         """
         Инициализация бота
 
         Args:
             token: Токен бота от @BotFather
-            db_path: Путь к базе данных с позициями
             admin_ids: Список ID администраторов
         """
         # Исправленная инициализация Bot
@@ -32,18 +31,16 @@ class TradingBot:
             default=DefaultBotProperties(parse_mode=ParseMode.HTML)
         )
         self.dp = Dispatcher()
-        self.db_path = db_path
+        self.db_path = get_setting('db_path', get_default_db_path())
+        print(f'[ПУТЬ]{self.db_path}')
         self.admin_ids = admin_ids or []  # Список ID администраторов
-
-        # Инициализируем базу данных для пользователей
-        self.users_db_path = 'C:\\DataBase\\bot_users.db'
+        self.users_db_path = get_setting('bot_users_db', get_default_users_db_path())
 
         # Регистрируем обработчики
         self.register_handlers()
 
     def init_users_db(self):
         """Инициализация базы данных для пользователей бота"""
-        os.makedirs('C:\\DataBase', exist_ok=True)
 
         with sqlite3.connect(self.users_db_path) as conn:
             cursor = conn.cursor()

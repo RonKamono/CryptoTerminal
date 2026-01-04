@@ -248,56 +248,58 @@ def start_bot_in_thread():
     return bot_thread
 
 
-def main(page: ft.Page):
-    # Работа с загрузкой настроек
-    initialize_registry()
-    check_settings_status()
+class App:
+    def __init__(self):
+        self.main_container = None
 
-    # load App settings
-    ws = WindowSettings()
-    cl = Colors()
+    def main(self, page):
+        initialize_registry()
+        check_settings_status()
 
-    # Page settings
-    page.window.height = ws.height
-    page.window.width = ws.width
-    page.title = 'Trade Panel'
-    page.padding = 0
-    page.window.center()
-    page.window.frameless = True
-    page.bgcolor = cl.color_bg
+        # load App settings
+        ws = WindowSettings()
+        cl = Colors()
 
-    # Работа с ТГ БОТОМ
-    trading_bot = initialize_bot()
+        # Page settings
+        page.window.height = ws.height
+        page.window.width = ws.width
+        page.title = 'Trade Panel'
+        page.padding = 0
+        page.window.center()
+        page.window.frameless = True
+        page.bgcolor = cl.color_bg
 
-    # Create AppWindow | AppBar
-    app_view = pages.AppWindow(page, cl, trading_bot)
-    app_bar = pages.AppBarTop(page, cl)  # Передаем trading_bot в AppBarTop
-    top_appbar = app_bar.top_appbar
+        # Работа с ТГ БОТОМ
+        trading_bot = initialize_bot()
 
-    # create main container
-    main_container = app_view.app_page
+        # Create AppWindow | AppBar
+        self.app_view = pages.AppWindow(page, cl, trading_bot)
+        self.app_bar = pages.AppBarTop(page, cl)
+        self.top_appbar = self.app_bar.top_appbar
 
-    # Добавляем на страницу
-    page.add(
-        ft.Column(
-            expand=True,
-            controls=[
-                top_appbar,
-                main_container
-            ],
-            alignment=ft.MainAxisAlignment.START,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        # create main container
+        self.main_container = self.app_view.app_page
+
+        # Добавляем на страницу
+        page.add(
+            ft.Column(
+                expand=True,
+                controls=[
+                    self.top_appbar,
+                    self.main_container
+                ],
+                alignment=ft.MainAxisAlignment.START,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            )
         )
-    )
 
-    page.update()
+        page.update()
 
-    # Запускаем бота в отдельном потоке только если токен заполнен
-    bot_thread = start_bot_in_thread()
-    page.bot_thread = bot_thread
+        bot_thread = start_bot_in_thread()
+        page.bot_thread = bot_thread
 
-    print("\n💡 Для изменения настроек нажмите на иконку настроек (шестеренка) в правом верхнем углу")
-
+    def change_tab(self, tab_name):
+        print(self.main_container)
 
 if __name__ == "__main__":
     print("=" * 50)
@@ -320,7 +322,8 @@ if __name__ == "__main__":
 
     time.sleep(0.1)  # Минимальная задержка
 
+    app = App()
     # Запускаем Flet приложение
-    ft.app(main)
+    ft.app(app.main)
 
     print("\n👋 Приложение закрыто")

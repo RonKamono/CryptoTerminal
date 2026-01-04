@@ -33,11 +33,9 @@ def get_app_data_folder():
 
     return str(app_folder)
 
-
 def get_default_db_path():
     """Получить путь к базе данных по умолчанию"""
     return str(Path(get_app_data_folder()) / 'trading.db')
-
 
 def get_default_users_db_path():
     """Получить путь к базе данных пользователей по умолчанию"""
@@ -81,7 +79,6 @@ TELEGRAM_BOT_TOKEN = get_setting('telegram_bot_token', "") # 8218318461:AAE6t5wl
 ADMIN_IDS = get_setting_list('admin_ids', []) # 7594592988
 API_URL = get_setting('api_url', "http://localhost:8000")
 
-# БАЗЫ ДАННЫХ В APPDATA/LOCAL (скрыто от пользователя)
 DB_PATH = get_setting('db_path', get_default_db_path())
 BOT_USERS_DB = get_setting('bot_users_db', get_default_users_db_path())
 

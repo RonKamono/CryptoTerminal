@@ -10,6 +10,10 @@ functions = utils.window_functions.WindowFunctions()
 
 class AppBarTop:
     def __init__(self, page, cl):
+        """
+
+        :rtype: object
+        """
         self.page = page
         self.cl = cl
         self.top_appbar = ft.Row(
@@ -24,7 +28,15 @@ class AppBarTop:
                             expand=True,
                             controls=[
                                 ft.Row(controls=[
-                                    ft.Container(ft.Icon(ft.Icons.TERMINAL, color=cl.text_primary, size=40)),
+                                    ft.Container(ft.IconButton(icon =ft.Icons.TERMINAL,
+                                                               hover_color=cl.secondary_bg,
+                                                               icon_color=cl.text_primary,icon_size=32,
+                                                               on_click= lambda e: self._change_tab(tab_name='signal_terminal'))),
+                                    ft.Container(ft.IconButton(icon =ft.Icons.TAB,
+                                                               hover_color=cl.secondary_bg,
+                                                               icon_color=cl.text_primary,icon_size=32,
+                                                               on_click= lambda e: self._change_tab(tab_name='database_terminal'))),
+
                                 ], alignment=MainAxisAlignment.START, expand=1),
                                 ft.Row(controls=[
                                     ft.Container(ft.Text('Trade Panel v0.1', weight=ft.FontWeight.W_600, size=36,
@@ -147,6 +159,13 @@ class AppBarTop:
         self.bot_token_container = self._create_container('TOKEN BOT', self.bot_token)
         self.admin_id_container = self._create_container('ID ADMIN', self.admin_id)
 
+    # Change TABS
+
+    def _change_tab(self, tab_name):
+        from main import App
+        app = App()
+
+        app.change_tab(tab_name)
 
     # Open settings
     def _open_settings(self, e):
