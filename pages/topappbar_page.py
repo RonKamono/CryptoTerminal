@@ -9,19 +9,15 @@ functions = utils.window_functions.WindowFunctions()
 
 
 class AppBarTop:
-    def __init__(self, page, cl):
-        """
-
-        :rtype: object
-        """
+    def __init__(self, page, cl, on_tab_change):
         self.page = page
         self.cl = cl
+        self.on_tab_change = on_tab_change
         self.top_appbar = ft.Row(
             [
                 ft.WindowDragArea(
                     ft.Container(
                         bgcolor=cl.secondary_bg,
-                        width=window_size.width,
                         height=50,
                         padding=ft.padding.symmetric(0, 10),
                         content=ft.Row(
@@ -31,11 +27,11 @@ class AppBarTop:
                                     ft.Container(ft.IconButton(icon =ft.Icons.TERMINAL,
                                                                hover_color=cl.secondary_bg,
                                                                icon_color=cl.text_primary,icon_size=32,
-                                                               on_click= lambda e: self._change_tab(tab_name='signal_terminal'))),
+                                                               on_click=lambda e: self.on_tab_change("terminal"))),
                                     ft.Container(ft.IconButton(icon =ft.Icons.TAB,
                                                                hover_color=cl.secondary_bg,
                                                                icon_color=cl.text_primary,icon_size=32,
-                                                               on_click= lambda e: self._change_tab(tab_name='database_terminal'))),
+                                                               on_click=lambda e: self.on_tab_change("database"))),
 
                                 ], alignment=MainAxisAlignment.START, expand=1),
                                 ft.Row(controls=[
@@ -159,10 +155,6 @@ class AppBarTop:
         self.bot_token_container = self._create_container('TOKEN BOT', self.bot_token)
         self.admin_id_container = self._create_container('ID ADMIN', self.admin_id)
 
-    # Change TABS
-
-    def _change_tab(self, tab_name):
-        pass
 
     # Open settings
     def _open_settings(self, e):

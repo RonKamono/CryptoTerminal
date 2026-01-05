@@ -20,7 +20,6 @@ except ImportError as e:
     print(f"⚠️ Registry disabled: {e}")
     USE_REGISTRY = False
 
-
 def initialize_registry():
     if not USE_REGISTRY:
         return None
@@ -46,7 +45,6 @@ def initialize_registry():
         print(f"❌ Registry init failed: {e}")
         return None
 
-
 def load_config():
     if USE_REGISTRY:
         return config.TELEGRAM_BOT_TOKEN, config.ADMIN_IDS
@@ -60,7 +58,6 @@ def load_config():
     admin_ids = [int(x.strip()) for x in admins.split(',')] if admins else []
 
     return token, admin_ids
-
 
 def initialize_bot():
     script_dir = Path(__file__).parent
@@ -90,9 +87,13 @@ def initialize_bot():
 class App:
     def __init__(self):
         self.trading_bot = None
+        self.page: ft.Page | None = None
+        self.main_container = ft.Container(expand=True)
 
     def main(self, page: ft.Page):
+        self.page = page
         initialize_registry()
+
         ws = WindowSettings()
         cl = Colors()
 
@@ -107,22 +108,47 @@ class App:
         page.title = "Trade Panel"
         page.bgcolor = cl.color_bg
 
+        app_bar = pages.AppBarTop(page, cl, on_tab_change=self.change_tab)
 
-        app_view = pages.TerminalPage(page, cl, self.trading_bot)
-        app_bar = pages.AppBarTop(page, cl)
+        # стартовая страница
+        terminal_page = pages.TerminalPage(page, cl, self.trading_bot)
+        self.main_container.content = terminal_page.app_page
+
         page.add(
             ft.Column(
                 expand=True,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
                 controls=[
                     app_bar.top_appbar,
-                    app_view.app_page
-                ]
+                    self.main_container
+                ], spacing=0
             )
         )
 
         if self.trading_bot and self.trading_bot.has_valid_token:
             page.run_task(self.trading_bot.start)
-            print("🤖 Telegram bot started via Flet event loop")
+
+    def change_tab(self, tab_name: str):
+        print(f"Switch tab → {tab_name}")
+
+        if not self.page:
+            return
+
+        if tab_name == "terminal":
+            view = pages.TerminalPage(self.page, Colors(), self.trading_bot)
+            self.main_container.content = view.app_page
+
+        elif tab_name == "database":
+            view = pages.DatabasePage(self.page, Colors())
+            self.main_container.content = view.app_page
+
+        else:
+            self.main_container.content = ft.Text(
+                f"Unknown tab: {tab_name}",
+                color=ft.Colors.RED
+            )
+
 
 
 if __name__ == "__main__":
