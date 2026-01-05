@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 
 import flet as ft
-from dotenv import load_dotenv
 
 from settings.window_settings import WindowSettings
 from settings.colors import Colors

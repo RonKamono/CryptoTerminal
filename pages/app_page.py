@@ -87,9 +87,9 @@ class TerminalPage:
             utils_path = os.path.join(os.path.dirname(__file__), '..', 'utils')
             if utils_path not in sys.path:
                 sys.path.append(utils_path)
-            from utils.database_logic import TradingDB
+            from utils.trading_db_postgres import TradingDBPostgres
+            self.db = TradingDBPostgres()
 
-            self.db = TradingDB()
             print("✅ База данных инициализирована в AppWindow")
         except Exception as e:
             print(f"❌ Ошибка инициализации БД: {e}")
@@ -917,13 +917,12 @@ class TerminalPage:
     def _update_container_with_data(self, index: int, position_data: Dict, last_price: str):
         """Обновляет контейнер с данными с проверкой TP/SL"""
         try:
-            from utils.database_logic import TradingDB
             from utils.telegram_notifier import send_close_notification
 
             id = position_data.get('id')
             name = position_data.get('name')
             pos_type = position_data.get('pos_type')
-            cross = position_data.get('cross')
+            cross = position_data.get('cross_margin')
             tp = position_data.get('take_profit')
             sl = position_data.get('stop_loss')
             percent = position_data.get('percent')
@@ -972,7 +971,6 @@ class TerminalPage:
 
             # Если сработал TP/SL - сохраняем в БД
             if is_active and (tp_hit or sl_hit):
-                db = TradingDB()
 
                 if tp_hit:
                     print(f'{id} - TP hit! Сохраняю в БД...')
@@ -984,7 +982,7 @@ class TerminalPage:
 
                 # Сохраняем в БД
                 try:
-                    db.update_position(
+                    self.db.update_position(
                         position_id=id,
                         is_active=False,
                         close_reason=new_close_reason,
