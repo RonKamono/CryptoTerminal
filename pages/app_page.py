@@ -1,4 +1,3 @@
-import concurrent.futures
 import webbrowser
 
 import flet as ft
@@ -6,12 +5,15 @@ import threading, time
 import utils.webbrowser_open as wbb
 import sys
 import os
+import asyncio
 from datetime import datetime
 from parsing.coin_price_parcing import get_bybit_futures_price
 from typing import Dict, List, Optional
 
 
-class AppWindow:
+
+
+class TerminalPage:
     def __init__(self, page, cl, trading_bot=None):
         self.page = page
         self.cl = cl
@@ -40,6 +42,9 @@ class AppWindow:
         # Загружаем позиции из БД
         self._load_positions_from_db()
 
+        # Кэширование
+        self._positions_cache: list[Dict] = []
+
         # Собираем представление
         self.app_page = self._build_app_view()
 
@@ -52,11 +57,13 @@ class AppWindow:
         self.alerts_lock = threading.Lock()
         self._start_alert_checker()
 
-        # Запускаем парсинг цен с небольшой задержкой
-        threading.Timer(1.0, self._start_price_updates).start()
+        self.volatile_pairs: list = []
+        self.pairs_update_lock = asyncio.Lock()
+        self._price_task: asyncio.Task | None = None
 
-        # Делаем первоначальную загрузку данных
-        threading.Timer(2.0, self._force_initial_price_update).start()
+        self.page.run_task(self._start_price_updates_async)
+
+        self.page.run_task(self._delayed_initial_price_update)
 
     def _start_auto_update(self):
         """Запускает поток автоматического обновления"""
@@ -89,44 +96,32 @@ class AppWindow:
             self.db = None
 
     def _load_positions_from_db(self):
-        """Загружает позиции из базы данных"""
-        if not self.db:
-            print("❌ БД не инициализирована")
-            return
+        self.page.run_task(self._load_positions_from_db_async)
 
+    async def _load_positions_from_db_async(self):
         try:
-            # Получаем все позиции
-            positions = self.db.get_all_positions(active_only=False)
-            # Получаем цены
-            price_cache = self._get_prices_parallel(positions)
+            positions = await asyncio.to_thread(
+                self.db.get_all_positions,
+                False
+            )
 
-            # Обновляем контейнеры
+            self._positions_cache = positions
+
+            price_cache = await self._get_prices_async(positions)
+
             for i in range(8):
                 if i < len(positions):
                     pos = positions[i]
-                    name = pos.get('name')
-                    last_price = price_cache.get(name, 'N/A')
+                    name = pos.get("name")
+                    last_price = price_cache.get(name, "N/A")
                     self._update_container_with_data(i, pos, last_price)
                 else:
-                    # Очищаем контейнер если позиции нет
-                    self.position_containers[i].content = ft.Column(
-                        controls=[
-                            ft.Text(f'Позиция {i + 1}', color=self.cl.text_secondary),
-                            ft.Text('Отсутствует', color=self.cl.text_secondary, size=12),
-                        ],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER
-                    )
-                    self.position_containers[i].bgcolor = self.cl.color_bg
+                    self._clear_position_container(i)
 
-            # Обновляем страницу
-            if self.page:
-                self.page.update()
+            self.page.update()
 
         except Exception as e:
             print(f"❌ Ошибка загрузки позиций: {e}")
-            import traceback
-            traceback.print_exc()
 
     ################ Создание элементов ################
 
@@ -276,16 +271,19 @@ class AppWindow:
 
     ################ Методы отвечающие за парсинг и изменение цен ################
 
-    def _force_initial_price_update(self):
+    async def _force_initial_price_update(self):
         try:
             from parsing.detected_24h_price import get_volatile_usdt_pairs
 
-            pairs = get_volatile_usdt_pairs(min_change=10.0, limit=10)
+            pairs = await asyncio.to_thread(
+                get_volatile_usdt_pairs,
+                min_change=10.0,
+                limit=10
+            )
 
-            with self.pairs_update_lock:
+            async with self.pairs_update_lock:
                 self.volatile_pairs = pairs
 
-            # Обновляем UI
             self._update_price_containers()
 
         except Exception as e:
@@ -318,108 +316,69 @@ class AppWindow:
             spacing=5
         )
 
-    def _start_price_updates(self):
-        """Запускает обновление цен в отдельном потоке"""
+    async def _start_price_updates_async(self):
+        from parsing.detected_24h_price import get_global_screener
+        screener = get_global_screener()
 
-        def price_update_thread():
-            try:
-                from parsing.detected_24h_price import get_global_screener
-            except ImportError as e:
-                print(f"❌ [AppWindow] Ошибка импорта: {e}")
-                return
+        loop = asyncio.get_running_loop()
 
-            screener = get_global_screener()
+        def on_pairs_update(pairs):
+            async def safe_update():
+                async with self.pairs_update_lock:
+                    self.volatile_pairs = pairs
+                self._update_price_containers()
 
-            # Функция обратного вызова при получении новых данных
-            def on_pairs_update(pairs):
-                """Эта функция вызывается из потока скринера"""
-                try:
-                    # Сохраняем данные
-                    with self.pairs_update_lock:
-                        self.volatile_pairs = pairs
+            loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(safe_update())
+            )
 
-                    # Обновляем UI в основном потоке
-                    if hasattr(self, 'page') and self.page:
-                        try:
-                            # Обновляем контейнеры синхронно
-                            self._update_price_containers()
-                        except Exception as e:
-                            print(f"⚠️ [AppWindow] Ошибка обновления UI: {e}")
+        screener.start_periodic_updates(on_pairs_update, interval=1)
 
-                except Exception as e:
-                    print(f"❌ [AppWindow] Ошибка в on_pairs_update: {e}")
-                    import traceback
-                    traceback.print_exc()
-
-            # Запускаем периодическое обновлениеЁ
-            screener.start_periodic_updates(on_pairs_update, interval=10)
-
-            # Держим поток живым
-            while not self._stop_price_updates:
-                time.sleep(1)
-
-        # Запускаем поток
-        thread = threading.Thread(target=price_update_thread, daemon=True)
-        thread.start()
-        print(f"✅ [AppWindow] Поток обновления цен запущен (ID: {thread.ident})")
+        while not self._stop_price_updates:
+            await asyncio.sleep(1)
 
     def _update_price_containers(self):
-        """Обновляет контейнеры с ценами на основе полученных данных"""
-        try:
-            if not hasattr(self, 'volatile_pairs'):
-                self.volatile_pairs = []
-
-            if not self.volatile_pairs:
-                # Если данных нет, показываем заглушки
-                for i in range(10):
-                    self._update_single_price_container(i, None)
-                return
-
-            # Обновляем первые N контейнеров данными
-            for i in range(min(10, len(self.volatile_pairs))):
-                self._update_single_price_container(i, self.volatile_pairs[i])
-
-            # Остальные контейнеры очищаем
-            for i in range(len(self.volatile_pairs), 10):
+        if not self.volatile_pairs:
+            for i in range(10):
                 self._update_single_price_container(i, None)
+            return
 
-            # Обновляем страницу
-            if hasattr(self, 'page') and self.page:
-                try:
-                    self.page.update()
-                except Exception as e:
-                    print(f"⚠️ [AppWindow] Ошибка обновления страницы: {e}")
-        except Exception as e:
-            print(f"❌ [AppWindow] Ошибка в _update_price_containers: {e}")
-            import traceback
-            traceback.print_exc()
+        for i in range(min(10, len(self.volatile_pairs))):
+            self._update_single_price_container(i, self.volatile_pairs[i])
+
+        for i in range(len(self.volatile_pairs), 10):
+            self._update_single_price_container(i, None)
+
+        if self.page:
+            self.page.update()
 
     def stop_all_updates(self):
-        """Останавливает все обновления"""
-        self._stop_update = True
-        self._stop_alerts = True
         self._stop_price_updates = True
 
-        # Останавливаем скринер
+        if self._price_task:
+            self._price_task.cancel()
+
         try:
             from parsing.detected_24h_price import get_global_screener
-            screener = get_global_screener()
-            screener.stop_updates()
+            get_global_screener().stop_updates()
         except:
             pass
 
-    def _force_price_update(self):
-        """Принудительное обновление цен"""
+    async def _force_price_update(self):
         from parsing.detected_24h_price import get_volatile_usdt_pairs
 
         try:
-            pairs = get_volatile_usdt_pairs(min_change=10.0, limit=10)
-            with self.pairs_update_lock:
+            pairs = await asyncio.to_thread(
+                get_volatile_usdt_pairs,
+                min_change=10.0,
+                limit=10
+            )
+
+            async with self.pairs_update_lock:
                 self.volatile_pairs = pairs
 
             self._update_price_containers()
 
-            # Показываем уведомление
             if self.page:
                 self.page.snack_bar = ft.SnackBar(
                     content=ft.Text("✅ Цены обновлены!"),
@@ -427,6 +386,7 @@ class AppWindow:
                 )
                 self.page.snack_bar.open = True
                 self.page.update()
+
         except Exception as e:
             print(f"❌ Ошибка принудительного обновления: {e}")
 
@@ -453,6 +413,10 @@ class AppWindow:
                     )
                 )
             )
+
+    async def _delayed_initial_price_update(self):
+        await asyncio.sleep(2)
+        await self._force_initial_price_update()
 
     ################ Методы отвечающие за Alert Target ################
 
@@ -1258,41 +1222,26 @@ class AppWindow:
 
     # Функции
     def _toggle_delete_mode(self, e):
-        """Включает/выключает режим удаления позиций"""
         self.delete_mode = not self.delete_mode
 
-        if self.delete_mode:
-            print("🔴 РЕЖИМ УДАЛЕНИЯ АКТИВЕН: Нажмите на позицию для удаления")
-            self.delete_position_button.text = "Cancel Delete"
-            self.cancel_delete_button.visible = True
+        self.delete_position_button.text = (
+            "Cancel Delete" if self.delete_mode else "Delete Position"
+        )
+        self.cancel_delete_button.visible = self.delete_mode
 
-            # Показываем сообщение
-            self._show_message("🔴 РЕЖИМ УДАЛЕНИЯ: Нажмите на позицию для удаления")
-
-            # Включаем анимацию пульсации для контейнеров позиций
-            for i, container in enumerate(self.position_containers):
-                if container.content.controls and len(container.content.controls) > 0:
-                    # Проверяем, есть ли реальная позиция
-                    first_text = container.content.controls[0]
-                    if isinstance(first_text, ft.Text) and "ID:" in first_text.value:
-                        container.on_click = lambda e, idx=i: self._delete_selected_position(idx)
-        else:
-            print("✅ Режим удаления отключен")
-            self.delete_position_button.text = "Delete Position"
-            self.delete_position_button.bgcolor = self.cl.surface
-            self.cancel_delete_button.visible = False
-
-            # Сбрасываем стили контейнеров
-            for container in self.position_containers:
-                container.bgcolor = self.cl.color_bg
+        for idx, container in enumerate(self.position_containers):
+            if self.delete_mode and idx < len(self._positions_cache):
+                container.border = ft.border.all(2, ft.Colors.RED_400)
+                container.on_click = lambda e, i=idx: self._delete_selected_position(i)
+            else:
                 container.border = None
                 container.on_click = None
 
-            self._show_message("✅ Режим удаления отключен")
+        self._show_message(
+            "🔴 РЕЖИМ УДАЛЕНИЯ АКТИВЕН" if self.delete_mode else "✅ Режим удаления отключен"
+        )
 
-        # Обновляем UI
-        if self.page:
-            self.page.update()
+        self.page.update()
 
     def _cancel_delete_mode(self, e):
         """Отменяет режим удаления"""
@@ -1313,75 +1262,49 @@ class AppWindow:
         if self.page:
             self.page.update()
 
-    def _delete_selected_position(self, index):
-        """Удаляет выбранную позицию"""
+    def _delete_selected_position(self, index: int):
         if not self.delete_mode:
             return
 
-        try:
-            # Получаем данные позиции
-            positions = self.db.get_all_positions(active_only=False)
-            if index >= len(positions):
-                print("❌ Позиция не найдена")
-                self._show_message("❌ Позиция не найдена", is_error=True)
-                return
+        if index >= len(self._positions_cache):
+            self._show_message("❌ Позиция не найдена", is_error=True)
+            return
 
-            position = positions[index]
-            position_id = position.get('id')
-            position_name = position.get('name')
+        pos = self._positions_cache[index]
+        self._show_delete_confirmation(pos["id"], pos["name"], index)
 
-            # Запрашиваем подтверждение
-            self._show_delete_confirmation(position_id, position_name, index)
-
-        except Exception as e:
-            print(f"❌ Ошибка при удалении позиции: {e}")
-            self._show_message(f"❌ Ошибка: {str(e)}", is_error=True)
+    async def _delete_position_async(self, position_id: int):
+        return await asyncio.to_thread(self.db.delete_position, position_id)
 
     def _show_delete_confirmation(self, position_id, position_name, index):
-        """Показывает диалог подтверждения удаления"""
+
+        async def confirm_delete_async():
+            success = await self._delete_position_async(position_id)
+
+            if success:
+                self._show_message(f"✅ Позиция {position_name} удалена")
+
+                if self.trading_bot:
+                    self.trading_bot.remove_position(position_id)
+
+                self._load_positions_from_db()
+            else:
+                self._show_message("❌ Не удалось удалить позицию", is_error=True)
+
+            self._cancel_delete_mode(None)
+            self.page.close(dlg)
+            self.page.update()
 
         def confirm_delete(e):
-            # Удаляем позицию из БД
-            if self.db and hasattr(self.db, 'delete_position'):
-                success = self.db.delete_position(position_id)
-                if success:
-                    print(f"✅ Позиция {position_name} (ID: {position_id}) удалена из БД")
-                    self._show_message(f"✅ Позиция {position_name} удалена")
+            self.page.run_task(confirm_delete_async)
 
-                    # Уведомляем TradingBot об удалении
-                    if self.trading_bot and hasattr(self.trading_bot, 'remove_position'):
-                        self.trading_bot.remove_position(position_id)
-
-                    # Обновляем UI
-                    self._load_positions_from_db()
-                else:
-                    print(f"❌ Не удалось удалить позицию {position_name}")
-                    self._show_message("❌ Не удалось удалить позицию", is_error=True)
-            else:
-                print("❌ База данных не доступна")
-                self._show_message("❌ База данных не доступна", is_error=True)
-
-            # Закрываем диалог
-            self.page.close(dlg)
-            # Отключаем режим удаления
-            self._cancel_delete_mode(None)
-
-        def cancel_delete(e):
-            self.page.close(dlg)
-
-        # Создаем диалог подтверждения
         dlg = ft.AlertDialog(
             title=ft.Text("Подтверждение удаления"),
-            content=ft.Column([
-                ft.Text(f"Вы уверены, что хотите удалить позицию?", size=16),
-                ft.Text(f"ID: {position_id} | {position_name}", size=18, weight=ft.FontWeight.BOLD),
-                ft.Text("Это действие нельзя отменить!", size=14, color=ft.Colors.RED, weight=ft.FontWeight.W_500)
-            ], tight=True),
+            content=ft.Text(f"Удалить {position_name}?"),
             actions=[
-                ft.TextButton("Удалить", on_click=confirm_delete, style=ft.ButtonStyle(color=ft.Colors.RED)),
-                ft.TextButton("Отмена", on_click=cancel_delete),
+                ft.TextButton("Удалить", on_click=confirm_delete),
+                ft.TextButton("Отмена", on_click=lambda e: self.page.close(dlg)),
             ],
-            actions_alignment=ft.MainAxisAlignment.END,
         )
 
         self.page.open(dlg)
@@ -1396,77 +1319,49 @@ class AppWindow:
         if self.page:
             self.page.update()
 
-    def _get_prices_parallel(self, positions: List[Dict]) -> Dict[str, str]:
-        """Получает цены для всех монет параллельно"""
-        price_cache = {}
-        unique_coins = list(set(pos.get('name') for pos in positions if pos.get('name')))
+    async def _get_prices_async(self, positions: list[Dict]) -> Dict[str, str]:
+        coins = {p["name"] for p in positions if p.get("name")}
+        if not coins:
+            return {}
 
-        if not unique_coins:
-            return price_cache
+        async def fetch(coin):
+            data = await asyncio.to_thread(get_bybit_futures_price, coin)
+            return coin, data["last_price"] if data["found"] else "N/A"
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_coin = {
-                executor.submit(get_bybit_futures_price, coin): coin
-                for coin in unique_coins
-            }
-
-            for future in concurrent.futures.as_completed(future_to_coin):
-                coin = future_to_coin[future]
-                try:
-                    price_data = future.result()
-                    if price_data['found']:
-                        price_cache[coin] = price_data['last_price']
-                    else:
-                        price_cache[coin] = 'N/A'
-                except:
-                    price_cache[coin] = 'N/A'
-
-        return price_cache
+        results = await asyncio.gather(*(fetch(c) for c in coins))
+        return dict(results)
 
     def _load_parsing_change(self):
         from parsing.detected_24h_price import StakanScreener
         ss = StakanScreener()
         ss.get_usdt_pairs(15, 10)
 
+    async def _create_position_async(self, name, percent, cross, tp, sl, pos_type):
+        price_data = await asyncio.to_thread(get_bybit_futures_price, name)
+        if not price_data["found"]:
+            return None
+
+        entry_price = float(price_data["last_price"])
+        return await asyncio.to_thread(
+            self.db.add_to_db, name, percent, cross, entry_price, tp, sl, pos_type
+        )
+
     def create_new_position(self, e):
-        """Создает новую позицию"""
-        if not self.db:
-            print("❌ БД не инициализирована")
-            return
+        async def runner():
+            pid = await self._create_position_async(
+                self.name_coin.value.strip().upper(),
+                int(self.percentage_balance.value),
+                int(self.cross.value),
+                float(self.take_profit.value or 0),
+                float(self.stop_loss.value or 0),
+                self.type.value.strip().lower(),
+            )
 
-        try:
-            name = self.name_coin.value.strip().upper()
-            percent = int(self.percentage_balance.value)
-            cross = int(self.cross.value)
-            tp = float(self.take_profit.value.replace(',', '.')) if self.take_profit.value else 0
-            sl = float(self.stop_loss.value.replace(',', '.')) if self.stop_loss.value else 0
-            pos_type = self.type.value.strip().lower()
-
-            # Получаем текущую цену
-            price_data = get_bybit_futures_price(coin=name)
-            if not price_data['found']:
-                print(f"❌ Не удалось получить цену для {name}")
-                return
-
-            entry_price = float(price_data['last_price'])
-
-            # Добавляем в БД
-            position_id = self.db.add_to_db(name, percent, cross, entry_price, tp, sl, pos_type)
-            print(f"✅ Позиция {name} добавлена в БД (ID: {position_id})")
-
-            # Обновляем UI
-            self._load_positions_from_db()
-
-            # Очищаем поля
-            self.name_coin.value = ''
-            self.take_profit.value = ''
-            self.stop_loss.value = ''
-
-            if self.page:
+            if pid:
+                self._load_positions_from_db()
                 self.page.update()
 
-        except Exception as ex:
-            print(f"❌ Ошибка создания позиции: {ex}")
+        self.page.run_task(runner)
 
     def close_position(self, name):
         """Закрывает позицию и отправляет уведомление"""
@@ -1511,3 +1406,28 @@ class AppWindow:
 
         except Exception as e:
             print(f"⚠️ Ошибка закрытия позиции: {e}")
+
+    def _clear_position_container(self, index: int):
+        """Очищает контейнер позиции (если позиции нет)"""
+        if index >= len(self.position_containers):
+            return
+
+        self.position_containers[index].content = ft.Column(
+            controls=[
+                ft.Text(
+                    f'Позиция {index + 1}',
+                    color=self.cl.text_secondary
+                ),
+                ft.Text(
+                    'Отсутствует',
+                    color=self.cl.text_secondary,
+                    size=12
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER
+        )
+
+        self.position_containers[index].bgcolor = self.cl.color_bg
+        self.position_containers[index].border = None
+        self.position_containers[index].on_click = None

@@ -39,7 +39,7 @@ class AppBarTop:
 
                                 ], alignment=MainAxisAlignment.START, expand=1),
                                 ft.Row(controls=[
-                                    ft.Container(ft.Text('Trade Panel v0.1', weight=ft.FontWeight.W_600, size=36,
+                                    ft.Container(ft.Text('Trade Panel v0.2', weight=ft.FontWeight.W_600, size=36,
                                                          color=cl.text_primary))
                                 ], alignment=MainAxisAlignment.CENTER, expand=1),
                                 ft.Row(controls=[
@@ -101,7 +101,7 @@ class AppBarTop:
             bot_token = config.TELEGRAM_BOT_TOKEN
             self.bot_token = self._create_text_field(
                 value=bot_token if bot_token else "",
-                hint_text="Введите токен бота от @BotFather",
+                hint_text="Введите токен бота",
                 password=True,
                 can_reveal_password=True
             )
@@ -162,10 +162,7 @@ class AppBarTop:
     # Change TABS
 
     def _change_tab(self, tab_name):
-        from main import App
-        app = App()
-
-        app.change_tab(tab_name)
+        pass
 
     # Open settings
     def _open_settings(self, e):
