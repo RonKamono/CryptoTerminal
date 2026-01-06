@@ -14,8 +14,8 @@ import pages
 
 # ===== Registry / Config =====
 try:
-    from utils import config
-    from utils.registry_config import RegistryConfig
+    from settings import config
+    from settings.registry_config import RegistryConfig
     USE_REGISTRY = True
     BASE_DIR = Path(__file__).resolve().parent
 except ImportError as e:

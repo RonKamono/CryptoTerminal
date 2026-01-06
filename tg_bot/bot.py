@@ -8,7 +8,7 @@ from aiogram.types import Message
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
-from utils.trading_db_postgres import TradingDBPostgres
+from utils.database.trading_db_postgres import TradingDBPostgres
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -143,6 +143,29 @@ class TradingBot:
         )
 
         return position_id
+
+    async def notify_position_closed(
+        self,
+        name: str,
+        pos_type: str,
+        entry_price: float,
+        close_price: float,
+        close_reason: str,
+        final_pnl: float
+    ):
+        emoji = "🎯" if close_reason == "tp" else "🛑"
+
+        message = (
+            f"{emoji} <b>CLOSE POSITIONS</b>\n\n"
+            f"<b>{name}</b>\n"
+            f"Type: {pos_type.upper()}\n"
+            f"Entry: {entry_price}\n"
+            f"Close: {close_price}\n"
+            f"Result: {final_pnl}%\n"
+            f"Reason: {'Take Profit' if close_reason == 'tp' else 'Stop Loss'}"
+        )
+
+        await self.send_to_all_users(message)
 
 
     # ==========================

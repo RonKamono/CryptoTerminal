@@ -8,7 +8,7 @@ import os
 import asyncio
 from datetime import datetime
 from parsing.coin_price_parcing import get_bybit_futures_price
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 
 
@@ -88,7 +88,7 @@ class TerminalPage:
             utils_path = os.path.join(os.path.dirname(__file__), '..', 'utils')
             if utils_path not in sys.path:
                 sys.path.append(utils_path)
-            from utils.trading_db_postgres import TradingDBPostgres
+            from utils.database.trading_db_postgres import TradingDBPostgres
             self.db = TradingDBPostgres()
 
             print("✅ База данных инициализирована в AppWindow")
@@ -96,9 +96,47 @@ class TerminalPage:
             print(f"❌ Ошибка инициализации БД: {e}")
             self.db = None
 
+    async def _force_initial_price_update(self):
+        try:
+            from parsing.detected_24h_price import get_volatile_usdt_pairs
+
+            pairs = await asyncio.to_thread(
+                get_volatile_usdt_pairs,
+                min_change=10.0,
+                limit=10
+            )
+
+            async with self.pairs_update_lock:
+                self.volatile_pairs = pairs
+
+            self._update_price_containers()
+
+        except Exception as e:
+            print(f"❌ [AppWindow] Ошибка начальной загрузки: {e}")
+
     def _load_positions_from_db(self):
         self.page.run_task(self._load_positions_from_db_async)
 
+    async def _start_price_updates_async(self):
+        from parsing.detected_24h_price import get_global_screener
+        screener = get_global_screener()
+
+        loop = asyncio.get_running_loop()
+
+        def on_pairs_update(pairs):
+            async def safe_update():
+                async with self.pairs_update_lock:
+                    self.volatile_pairs = pairs
+                self._update_price_containers()
+
+            loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(safe_update())
+            )
+
+        screener.start_periodic_updates(on_pairs_update, interval=3)
+
+        while not self._stop_price_updates:
+            await asyncio.sleep(2)
     async def _load_positions_from_db_async(self):
         try:
             positions = await asyncio.to_thread(
@@ -270,26 +308,6 @@ class TerminalPage:
         )
         self.target_coin_container.append(target_container)
 
-    ################ Методы отвечающие за парсинг и изменение цен ################
-
-    async def _force_initial_price_update(self):
-        try:
-            from parsing.detected_24h_price import get_volatile_usdt_pairs
-
-            pairs = await asyncio.to_thread(
-                get_volatile_usdt_pairs,
-                min_change=10.0,
-                limit=10
-            )
-
-            async with self.pairs_update_lock:
-                self.volatile_pairs = pairs
-
-            self._update_price_containers()
-
-        except Exception as e:
-            print(f"❌ [AppWindow] Ошибка начальной загрузки: {e}")
-
     def _create_price_container_content(self, index: int):
         """Создает содержимое контейнера цены"""
         return ft.Column(
@@ -317,26 +335,7 @@ class TerminalPage:
             spacing=5
         )
 
-    async def _start_price_updates_async(self):
-        from parsing.detected_24h_price import get_global_screener
-        screener = get_global_screener()
-
-        loop = asyncio.get_running_loop()
-
-        def on_pairs_update(pairs):
-            async def safe_update():
-                async with self.pairs_update_lock:
-                    self.volatile_pairs = pairs
-                self._update_price_containers()
-
-            loop.call_soon_threadsafe(
-                lambda: asyncio.create_task(safe_update())
-            )
-
-        screener.start_periodic_updates(on_pairs_update, interval=1)
-
-        while not self._stop_price_updates:
-            await asyncio.sleep(1)
+    ################ Методы отвечающие за парсинг и изменение цен ################
 
     def _update_price_containers(self):
         if not self.volatile_pairs:
@@ -391,6 +390,10 @@ class TerminalPage:
         except Exception as e:
             print(f"❌ Ошибка принудительного обновления: {e}")
 
+    async def _delayed_initial_price_update(self):
+        await asyncio.sleep(2)
+        await self._force_initial_price_update()
+
     def _show_top_pairs(self):
         """Показывает топ пар в диалоге"""
         if not self.volatile_pairs:
@@ -414,10 +417,6 @@ class TerminalPage:
                     )
                 )
             )
-
-    async def _delayed_initial_price_update(self):
-        await asyncio.sleep(2)
-        await self._force_initial_price_update()
 
     ################ Методы отвечающие за Alert Target ################
 
@@ -916,215 +915,156 @@ class TerminalPage:
         )
 
     def _update_container_with_data(self, index: int, position_data: Dict, last_price: str):
-        """Обновляет контейнер с данными с проверкой TP/SL"""
         try:
-            from utils.telegram_notifier import send_close_notification
 
+            # --- base data ---
             id = position_data.get('id')
             name = position_data.get('name')
             pos_type = position_data.get('pos_type')
-            cross_margin = position_data.get('cross_margin')
-            tp = position_data.get('take_profit')
-            sl = position_data.get('stop_loss')
-            percent = position_data.get('percent')
-            entry_price = position_data.get('entry_price')
+
+            entry_price = float(position_data.get('entry_price')) if position_data.get(
+                'entry_price') is not None else None
+            tp = float(position_data.get('take_profit')) if position_data.get('take_profit') is not None else None
+            sl = float(position_data.get('stop_loss')) if position_data.get('stop_loss') is not None else None
+            cross_margin = float(position_data.get('cross_margin')) if position_data.get(
+                'cross_margin') is not None else None
+            percent = float(position_data.get('percent')) if position_data.get('percent') is not None else None
+
             is_active = position_data.get('is_active', True)
             close_reason = position_data.get('close_reason')
 
-            # Работа с %
-            balance_percent = 0
-            if entry_price and last_price and cross_margin and last_price != 'N/A':
-                try:
-                    entry = float(entry_price)
-                    current = float(last_price)
-                    leverage = float(cross_margin)
-                    if pos_type == 'short':
-                        direction_multiplier = -1
-                    else:
-                        direction_multiplier = 1
+            last_price_f = float(last_price) if last_price != "N/A" else None
 
-                    price_change_pct = ((current - entry) / entry) * 100 * direction_multiplier
+            # --- pnl calculation ---
+            if entry_price and last_price_f and cross_margin:
+                entry = float(entry_price)
+                current = float(last_price_f)
+                leverage = float(cross_margin)
 
-                    position_share = float(percent) / 100 if percent else 0.01
-                    balance_percent = round(price_change_pct * leverage * position_share, 2)
-                except Exception as e:
-                    print(f"Ошибка расчёта: {e}")
-                    balance_percent = 0
+                if pos_type == "short":
+                    pnl_percent = (entry - current) / entry * leverage * 100
+                else:  # long
+                    pnl_percent = (current - entry) / entry * leverage * 100
 
-            # Проверяем TP/SL
-            tp_hit = False
-            sl_hit = False
-
-            if is_active and last_price != 'N/A':
-                try:
-                    last_price_float = float(last_price)
-                    tp_float = float(tp) if tp else None
-                    sl_float = float(sl) if sl else None
-
-                    if pos_type == "short":
-                        tp_hit = tp_float and last_price_float <= tp_float
-                        sl_hit = sl_float and last_price_float >= sl_float
-                    else:  # long
-                        tp_hit = tp_float and last_price_float >= tp_float
-                        sl_hit = sl_float and last_price_float <= sl_float
-                except Exception as e:
-                    print(f"Ошибка проверки TP/SL: {e}")
-
-            # Если сработал TP/SL - сохраняем в БД
-            if is_active and (tp_hit or sl_hit):
-
-                if tp_hit:
-                    print(f'{id} - TP hit! Сохраняю в БД...')
-                    new_close_reason = 'tp'
-
-                else:
-                    print(f'{id} - SL hit! Сохраняю в БД...')
-                    new_close_reason = 'sl'
-
-                # Сохраняем в БД
-                try:
-                    self.db.update_position(
-                        position_id=id,
-                        is_active=False,
-                        close_reason=new_close_reason,
-                        closed_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        final_pnl=balance_percent
-                    )
-                    print(f"✅ Позиция {id} сохранена в БД как неактивная")
-                    is_active = False
-                    close_reason = new_close_reason  # Обновляем причину закрытия
-
-                    # Отправляем уведомление в Telegram
-                    try:
-                        close_data = {
-                            'id': id,
-                            'name': name,
-                            'pos_type': pos_type,
-                            'entry_price': entry_price,
-                            'take_profit': tp,
-                            'stop_loss': sl,
-                            'close_reason': new_close_reason,
-                            'final_pnl': balance_percent,
-                            'closed_at': datetime.now().strftime('%m-%d %H:%M')
-                        }
-                        send_close_notification(close_data)
-                        print(f"📢 Уведомление о закрытии {name} отправлено")
-                    except Exception as e:
-                        print(f"⚠️ Ошибка отправки уведомления: {e}")
-
-                    # Уведомляем TradingBot о закрытии
-                    if self.trading_bot and hasattr(self.trading_bot, 'remove_position'):
-                        self.trading_bot.remove_position(id)
-
-                except Exception as e:
-                    print(f"❌ Ошибка сохранения в БД: {e}")
-
-            # Определяем цвет и статус
-            if not is_active:
-                # Безопасная проверка close_reason
-                if close_reason and 'tp' in str(close_reason).lower():
-                    status = "TP HIT"
-                    text_color = ft.Colors.GREEN_400
-                elif close_reason and 'sl' in str(close_reason).lower():
-                    status = "SL HIT"
-                    text_color = ft.Colors.RED_400
-                else:
-                    status = "CLOSED"
-                    text_color = ft.Colors.GREY_400
+                pnl_percent = round(pnl_percent, 2)
             else:
-                if balance_percent > 0:
-                    status = f"+{balance_percent}%"
-                    text_color = ft.Colors.GREEN_400
+                pnl_percent = 0.0
+
+
+            # --- TP / SL check ---
+            tp_hit = sl_hit = False
+            if is_active and last_price_f:
+                if pos_type == "short":
+                    tp_hit = tp and last_price_f <= tp
+                    sl_hit = sl and last_price_f >= sl
                 else:
-                    status = f"{balance_percent}%"
-                    text_color = ft.Colors.RED_400
+                    tp_hit = tp and last_price_f >= tp
+                    sl_hit = sl and last_price_f <= sl
 
-            # Форматируем цены
-            entry_display = str(entry_price) if entry_price else "N/A"
-            current_display = last_price if last_price != 'N/A' else "N/A"
-            tp_display = str(tp) if tp else "N/A"
-            sl_display = str(sl) if sl else "N/A"
+            # --- close position ---
+            if is_active and (tp_hit or sl_hit):
+                close_reason = "tp" if tp_hit else "sl"
 
-            # Работа с цветом для | pos_type
-            type_color = ft.Colors.RED_400
-            if pos_type.upper() == "LONG":
-                type_color = ft.Colors.GREEN_400
+                self.db.update_position(
+                    position_id=id,
+                    is_active=False,
+                    close_reason=close_reason,
+                    closed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    final_pnl=pnl_percent
+                )
 
-            # Update container positions
-            container_content = ft.Column(
-                controls=[
-                    ft.Text(f"ID: {id} | {name.upper()}", color=self.cl.text_primary, size=16,
-                            weight=ft.FontWeight.W_600),
-                    ft.Row(controls=[
-                        ft.Text(f"{pos_type.upper()}", color=type_color, size=15, weight=ft.FontWeight.W_600),
-                        ft.Text(f'| CROSS: {cross_margin} | PERCENT: {percent}%', color=self.cl.text_primary,
-                                size=15, weight=ft.FontWeight.W_600)
-                    ], alignment=ft.MainAxisAlignment.CENTER),
-                    ft.Text(f"Entry: {entry_display}$ | Current: {current_display}$", color=self.cl.text_primary,
-                            size=14, weight=ft.FontWeight.W_600),
-                    ft.Text(f"TP: {tp_display} | SL: {sl_display}", color=self.cl.text_primary, size=13,
-                            weight=ft.FontWeight.W_600),
-                    ft.Text(f"{status}", color=text_color, size=14, weight=ft.FontWeight.W_700),
-                    ft.Row(controls=[
-                        ft.ElevatedButton(
-                            text='Bybit',
-                            color=self.cl.text_primary,
-                            width=70,
-                            bgcolor=self.cl.secondary_bg,
-                            on_click=lambda e: wbb.bybit_open(name)
-                        ),
-                        ft.ElevatedButton(
-                            text='Binance',
-                            color=self.cl.text_primary,
-                            width=70,
-                            bgcolor=self.cl.secondary_bg,
-                            on_click=lambda e: wbb.binance_open(name)
-                        ),
-                        ft.ElevatedButton(
-                            text='BingX',
-                            color=self.cl.text_primary,
-                            width=70,
-                            bgcolor=self.cl.secondary_bg,
-                            on_click=lambda e: wbb.binx_open(name)
-                        ),
-                        ft.ElevatedButton(
-                            text='Mexc',
-                            color=self.cl.text_primary,
-                            width=70,
-                            bgcolor=self.cl.secondary_bg,
-                            on_click=lambda e: wbb.mexc_open(name)
-                        )
-                    ], alignment=ft.MainAxisAlignment.CENTER)
-                ],
+                is_active = False
+
+                if self.trading_bot:
+                    self.trading_bot.remove_position(id)
+
+            # --- status / color ---
+            if not is_active:
+                status = "TP HIT" if close_reason == "tp" else "SL HIT"
+                text_color = ft.Colors.GREEN_400 if close_reason == "tp" else ft.Colors.RED_400
+            else:
+                status = f"+{pnl_percent}%" if pnl_percent > 0 else f"{pnl_percent}%"
+                text_color = ft.Colors.GREEN_400 if pnl_percent > 0 else ft.Colors.RED_400
+
+            # --- UI ---
+            self.position_containers[index].content = ft.Column(
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=5
+                spacing=6,
+                controls=[
+                    ft.Text(
+                        f"ID: {id} | {name.upper()}",
+                        size=16,
+                        weight=ft.FontWeight.W_600
+                    ),
+
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        controls=[
+                            ft.Text(
+                                pos_type.upper(),
+                                color=ft.Colors.GREEN_400 if pos_type == "long" else ft.Colors.RED_400,
+                                weight=ft.FontWeight.W_600
+                            ),
+                            ft.Text(f"| CROSS: {cross_margin} | PERCENT: {percent}%")
+                        ]
+                    ),
+
+                    ft.Text(f"Entry: {entry_price} | Current: {last_price}"),
+                    ft.Text(f"TP: {tp or 'N/A'} | SL: {sl or 'N/A'}"),
+                    ft.Text(status, color=text_color, weight=ft.FontWeight.W_700),
+
+                    ft.Row(
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=6,
+                        controls=[
+                            ft.ElevatedButton(
+                                "Bybit",
+                                bgcolor=self.cl.secondary_bg,
+                                color=self.cl.text_primary,
+                                width=70,
+                                height=32,
+                                on_click=lambda e: wbb.bybit_open(name)
+                            ),
+                            ft.ElevatedButton(
+                                "Binance",
+                                bgcolor=self.cl.secondary_bg,
+                                color=self.cl.text_primary,
+                                width=70,
+                                height=32,
+                                on_click=lambda e: wbb.binance_open(name)
+                            ),
+                            ft.ElevatedButton(
+                                "BingX",
+                                bgcolor=self.cl.secondary_bg,
+                                color=self.cl.text_primary,
+                                width=70,
+                                height=32,
+                                on_click=lambda e: wbb.binx_open(name)
+                            ),
+                            ft.ElevatedButton(
+                                "Mexc",
+                                bgcolor=self.cl.secondary_bg,
+                                color=self.cl.text_primary,
+                                width=70,
+                                height=32,
+                                on_click=lambda e: wbb.mexc_open(name)
+                            ),
+                        ]
+                    )
+                ]
             )
 
-            # Назначаем обработчик клика в зависимости от режима
+            # --- delete mode ---
             if self.delete_mode:
-                self.position_containers[index].on_click = lambda e, idx=index: self._delete_selected_position(idx)
-                # Добавляем визуальный индикатор режима удаления
                 self.position_containers[index].border = ft.border.all(2, ft.Colors.RED_400)
+                self.position_containers[index].on_click = lambda e, i=index: self._delete_selected_position(i)
             else:
-                self.position_containers[index].on_click = None
-                self.position_containers[index].bgcolor = self.cl.color_bg
                 self.position_containers[index].border = None
-
-            self.position_containers[index].content = container_content
+                self.position_containers[index].on_click = None
 
         except Exception as e:
-            print(f"❌ Ошибка обновления контейнера {index}: {e}")
-            import traceback
-            traceback.print_exc()
-            self.position_containers[index].content = ft.Column(
-                controls=[
-                    ft.Text(f"Позиция {index + 1}", color=self.cl.text_secondary),
-                    ft.Text('Ошибка загрузки', color=self.cl.text_secondary, size=12),
-                ],
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER
-            )
+            print(f"❌ Ошибка обновления позиции {index}: {e}")
 
     def _update_single_price_container(self, index: int, pair_data: Optional[Dict]):
         """Обновляет один контейнер с ценой"""

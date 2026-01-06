@@ -14,9 +14,9 @@ class TradingDBPostgres:
     # ==========================
     # CONNECTION
     # ==========================
+
     def _get_conn(self):
         db_url = os.getenv("DATABASE_URL")
-
         if not db_url:
             logger.critical("DATABASE_URL is NOT set")
             raise RuntimeError("DATABASE_URL is NOT set")
@@ -35,6 +35,7 @@ class TradingDBPostgres:
     # ==========================
     # POSITIONS
     # ==========================
+
     def get_all_positions(self, active_only=True):
         logger.debug("Fetching positions | active_only=%s", active_only)
 
@@ -179,15 +180,24 @@ class TradingDBPostgres:
             with self._get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        SELECT user_id
+                        SELECT
+                            user_id,
+                            username,
+                            first_name,
+                            last_name,
+                            created_at
                         FROM bot_users
                         WHERE is_active = true
+                        ORDER BY created_at DESC
                     """)
 
-                    users = [row["user_id"] for row in cur.fetchall()]
+                    users = cur.fetchall()  # список dict
+
                     logger.info("Fetched %d active users", len(users))
                     return users
 
         except Exception:
             logger.exception("Failed to fetch active users")
             return []
+
+

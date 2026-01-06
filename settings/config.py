@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 try:
-    from .registry_config import RegistryConfig
+    from settings.registry_config import RegistryConfig
     USE_REGISTRY = True
 except ImportError:
     USE_REGISTRY = False
