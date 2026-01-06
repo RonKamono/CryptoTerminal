@@ -1,8 +1,8 @@
 import os
 import logging
 import psycopg2
+from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
-
 # ==========================
 # LOGGER
 # ==========================
@@ -10,59 +10,60 @@ logger = logging.getLogger(__name__)
 
 
 class TradingDBPostgres:
+    _pool: SimpleConnectionPool | None = None
+
+    def __init__(self):
+        if self.__class__._pool is None:
+            logger.info("Initializing PostgreSQL connection pool")
+
+            self.__class__._pool = SimpleConnectionPool(
+                minconn=1,
+                maxconn=5,
+                dsn=os.getenv("DATABASE_URL"),
+                cursor_factory=RealDictCursor
+            )
+
 
     # ==========================
     # CONNECTION
     # ==========================
 
     def _get_conn(self):
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            logger.critical("DATABASE_URL is NOT set")
-            raise RuntimeError("DATABASE_URL is NOT set")
+        if self._pool is None:
+            raise RuntimeError("PostgreSQL pool is not initialized")
 
-        logger.debug("Opening PostgreSQL connection")
+        return self._pool.getconn()
 
-        try:
-            return psycopg2.connect(
-                db_url,
-                cursor_factory=RealDictCursor
-            )
-        except Exception:
-            logger.exception("Failed to connect to PostgreSQL")
-            raise
+    def _put_conn(self, conn):
+        if self._pool and conn:
+            self._pool.putconn(conn)
 
     # ==========================
     # POSITIONS
     # ==========================
 
     def get_all_positions(self, active_only=True):
-        logger.debug("Fetching positions | active_only=%s", active_only)
-
+        conn = self._get_conn()
         try:
-            with self._get_conn() as conn:
-                with conn.cursor() as cur:
-                    if active_only:
-                        cur.execute("""
-                            SELECT *
-                            FROM positions
-                            WHERE is_active = true
-                            ORDER BY created_at DESC
-                        """)
-                    else:
-                        cur.execute("""
-                            SELECT *
-                            FROM positions
-                            ORDER BY is_active DESC, created_at DESC
-                        """)
-
-                    rows = cur.fetchall()
-                    logger.info("Fetched %d positions", len(rows))
-                    return rows
-
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT *
+                    FROM positions
+                    WHERE is_active = true
+                    ORDER BY created_at DESC
+                """ if active_only else """
+                    SELECT *
+                    FROM positions
+                    ORDER BY is_active DESC, created_at DESC
+                """)
+                rows = cur.fetchall()
+                logger.info("Fetched %d positions", len(rows))
+                return rows
         except Exception:
             logger.exception("Failed to fetch positions")
             return []
+        finally:
+            self._put_conn(conn)
 
     def add_to_db(
         self,
@@ -175,26 +176,25 @@ class TradingDBPostgres:
 
     def get_active_users(self):
         logger.debug("Fetching active bot users")
-
+        conn = self._get_conn()
         try:
-            with self._get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT
-                            user_id,
-                            username,
-                            first_name,
-                            last_name,
-                            created_at
-                        FROM bot_users
-                        WHERE is_active = true
-                        ORDER BY created_at DESC
-                    """)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        user_id,
+                        username,
+                        first_name,
+                        last_name,
+                        created_at
+                    FROM bot_users
+                    WHERE is_active = true
+                    ORDER BY created_at DESC
+                """)
 
-                    users = cur.fetchall()  # список dict
+                users = cur.fetchall()  # список dict
 
-                    logger.info("Fetched %d active users", len(users))
-                    return users
+                logger.info("Fetched %d active users", len(users))
+                return users
 
         except Exception:
             logger.exception("Failed to fetch active users")

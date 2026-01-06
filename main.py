@@ -5,6 +5,9 @@ from pathlib import Path
 import flet as ft
 
 from dotenv import load_dotenv
+
+from utils.database.trading_db_postgres import TradingDBPostgres
+
 load_dotenv(override=True)
 
 from settings.window_settings import WindowSettings
@@ -90,10 +93,13 @@ class App:
     def __init__(self):
         self.trading_bot = None
         self.page: ft.Page | None = None
+        self.db = TradingDBPostgres()
         self.main_container = ft.Container(expand=True)
+
 
     def main(self, page: ft.Page):
         self.page = page
+
         initialize_registry()
 
         ws = WindowSettings()
@@ -113,7 +119,13 @@ class App:
         app_bar = pages.AppBarTop(page, cl, on_tab_change=self.change_tab)
 
         # стартовая страница
-        terminal_page = pages.TerminalPage(page, cl, self.trading_bot)
+        terminal_page = pages.TerminalPage(
+            page,
+            cl,
+            database=self.db,
+            trading_bot=self.trading_bot
+        )
+
         self.main_container.content = terminal_page.app_page
 
         page.add(
@@ -139,18 +151,19 @@ class App:
             return
 
         if tab_name == "terminal":
-            view = pages.TerminalPage(self.page, Colors(), self.trading_bot)
+            view = pages.TerminalPage(
+                self.page,
+                Colors(),
+                database=self.db,
+                trading_bot=self.trading_bot
+            )
+
             self.main_container.content = view.app_page
 
         elif tab_name == "database":
-            view = pages.DatabasePage(self.page, Colors())
+            view = pages.DatabasePage(self.page, Colors(),database=self.db)
             self.main_container.content = view.app_page
 
-        else:
-            self.main_container.content = ft.Text(
-                f"Unknown tab: {tab_name}",
-                color=ft.Colors.RED
-            )
 
 
 

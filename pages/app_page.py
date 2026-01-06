@@ -12,16 +12,15 @@ from typing import Dict, Optional
 
 
 
-
 class TerminalPage:
-    def __init__(self, page, cl, trading_bot=None):
+    def __init__(self, page, cl, database, trading_bot=None):
         self.page = page
         self.cl = cl
         self.trading_bot = trading_bot
         self._stop_update = False
         self._stop_price_updates = False
         self._is_shutting_down = False
-        self.db = None
+        self.db = database
 
         # Для хранения данных о парах
         self.volatile_pairs = []
@@ -45,12 +44,10 @@ class TerminalPage:
 
         # Кэширование
         self._positions_cache: list[Dict] = []
+        self._price_loop_task = self.page.run_task(self._price_loop)
 
         # Собираем представление
         self.app_page = self._build_app_view()
-
-        # Запускаем автообновление позиций
-        self._start_auto_update()
 
         # Работа с потоками для ALERT
         self._stop_alerts = False
@@ -66,20 +63,6 @@ class TerminalPage:
 
         self.page.run_task(self._delayed_initial_price_update)
 
-    def _start_auto_update(self):
-        """Запускает поток автоматического обновления"""
-
-        def update_loop():
-            while not self._stop_update:
-                time.sleep(2)
-                if self._stop_update:
-                    break
-                # Обновляем данные
-                if self.page and self.db:
-                    self._load_positions_from_db()
-
-        thread = threading.Thread(target=update_loop, daemon=True)
-        thread.start()
 
     def _init_database(self):
         """Инициализация подключения к базе данных"""
@@ -88,8 +71,6 @@ class TerminalPage:
             utils_path = os.path.join(os.path.dirname(__file__), '..', 'utils')
             if utils_path not in sys.path:
                 sys.path.append(utils_path)
-            from utils.database.trading_db_postgres import TradingDBPostgres
-            self.db = TradingDBPostgres()
 
             print("✅ База данных инициализирована в AppWindow")
         except Exception as e:
@@ -417,6 +398,36 @@ class TerminalPage:
                     )
                 )
             )
+
+    async def _price_loop(self):
+        while not self._is_shutting_down:
+            try:
+                if not self._positions_cache:
+                    await asyncio.sleep(1)
+                    continue
+
+                # берём уникальные монеты
+                coins = {p["name"] for p in self._positions_cache if p.get("name")}
+
+                async def fetch(coin):
+                    data = await asyncio.to_thread(get_bybit_futures_price, coin)
+                    return coin, data["last_price"] if data["found"] else None
+
+                results = await asyncio.gather(*(fetch(c) for c in coins))
+                price_map = dict(results)
+
+                # обновляем UI + TP/SL
+                for i, pos in enumerate(self._positions_cache[:8]):
+                    price = price_map.get(pos["name"])
+                    if price is not None:
+                        self._update_container_with_data(i, pos, price)
+
+                self.page.update()
+
+            except Exception as e:
+                print(f"❌ price loop error: {e}")
+
+            await asyncio.sleep(1)
 
     ################ Методы отвечающие за Alert Target ################
 
@@ -1160,6 +1171,8 @@ class TerminalPage:
             )
 
     # Функции
+
+
     def _toggle_delete_mode(self, e):
         self.delete_mode = not self.delete_mode
 
@@ -1313,7 +1326,6 @@ class TerminalPage:
         print(f"🔔 Закрытие позиции: {name}")
 
         try:
-            from utils.telegram_notifier import send_close_notification
 
             if not self.db:
                 print("❌ БД не инициализирована")
@@ -1332,22 +1344,7 @@ class TerminalPage:
                 print(f"⚠️ Активная позиция {name} не найдена")
                 return
 
-            # Формируем данные для закрытия
-            close_data = {
-                'id': position_to_close.get('id'),
-                'name': name,
-                'pos_type': position_to_close.get('pos_type'),
-                'entry_price': position_to_close.get('entry_price'),
-                'take_profit': position_to_close.get('take_profit'),
-                'stop_loss': position_to_close.get('stop_loss'),
-                'close_reason': 'manual',  # или 'tp', 'sl' в зависимости от ситуации
-                'final_pnl': 0,  # можно рассчитать
-                'closed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
 
-            # Отправляем уведомление
-            send_close_notification(close_data)
-            print(f"📢 Уведомление о закрытии {name} отправлено")
 
         except Exception as e:
             print(f"⚠️ Ошибка закрытия позиции: {e}")

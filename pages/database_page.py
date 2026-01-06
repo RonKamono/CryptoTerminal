@@ -2,14 +2,12 @@ import webbrowser
 
 import flet as ft
 
-from utils.database.trading_db_postgres import TradingDBPostgres
-
 class DatabasePage:
-    def __init__(self, page, cl, trading_bot=None):
+    def __init__(self, page, cl, database, trading_bot=None):
         self.page = page
         self.cl = cl
         self.trading_bot = trading_bot
-        self.db = TradingDBPostgres()
+        self.db = database
         self.users_count = len(self.db.get_active_users())
         self.users_all_info = []
         self.load_user_from_db()
