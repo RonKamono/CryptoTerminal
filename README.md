@@ -1,7 +1,9 @@
 Python приложение с FastAPI для автоматизации (асинхронные API, PostgreSQL, SQLAlchemy, тесты)
 
-CryptoTerminal — backend-сервис, реализованный на Python с использованием Flet | FastAPI для построения асинхронных API, работы с PostgreSQL через SQLAlchemy и автоматизации ключевых бизнес-процессов. Проект включает тесты, пример структуры кода и примеры запросов
+CryptoTerminal — backend-сервис, реализованный на Python с использованием Flet | Telegram Bot - aiogram | FastAPI для построения асинхронных, работы с ByBit и БД в виде PostgreSQL, автоматизации ключевых бизнес-процессов
 
+- Gui | Flet
+- Aiogram
 - FastAPI
 - Асинхронные запросы (async/await)
 - PostgreSQL
