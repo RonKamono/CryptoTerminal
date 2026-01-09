@@ -9,13 +9,13 @@ CryptoTerminal — backend-сервис, реализованный на Python 
 - PostgreSQL
 - Git workflow
 
-- Установка
+#Установка
 git clone https://github.com/RonKamono/CryptoTerminal.git
 cd CryptoTerminal
 
-- Создать виртуальное окружение
+# Создать виртуальное окружение
 python -m venv venv
 venv\Scripts\activate     # Windows
 
-- Установить зависимости
+# Установить зависимости
 pip install -r requirements.txt
